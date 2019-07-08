@@ -561,10 +561,7 @@ int config_FPGA()
 {
 	int i=0;
 
-	//Set up pins for programming FPGA
-	nrf_gpio_pin_dir_set(CHIP_RESET_PIN,NRF_GPIO_PIN_DIR_OUTPUT);
-	nrf_gpio_pin_dir_set(FPGA_RESET_PIN,NRF_GPIO_PIN_DIR_OUTPUT);
-	nrf_gpio_pin_set(FPGA_RESET_PIN);
+
 
 
 
@@ -643,6 +640,17 @@ int main(void)
     services_init();
     advertising_init();
     conn_params_init();
+
+    //////////////////////////
+    //ADDED CODE
+	//Set up pins for programming FPGA
+	nrf_gpio_pin_dir_set(CHIP_RESET_PIN,NRF_GPIO_PIN_DIR_OUTPUT);
+	nrf_gpio_pin_dir_set(FPGA_RESET_PIN,NRF_GPIO_PIN_DIR_OUTPUT);
+	nrf_gpio_pin_set(FPGA_RESET_PIN);
+    uint8_t res = config_FPGA();
+    NRF_LOG_INFO("FPGA programmed result %d",res);
+    //////////////////////////
+
 
     // Start execution.
 //    printf("\r\nUART started.\r\n");
