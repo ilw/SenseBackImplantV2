@@ -20,6 +20,10 @@
 #include "nrf_pwr_mgmt.h"
 #include "incbin.h"
 #include "nrf_delay.h"
+#include "ringbuf.h"
+#include "nrf_drv_spi.h"
+#include "nrf_drv_gpiote.h"
+
 
 #if defined (UART_PRESENT)
 #include "nrf_uart.h"
@@ -53,8 +57,6 @@
 
 #define DEAD_BEEF                       0xDEADBEEF                                  /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
-#define UART_TX_BUF_SIZE                256                                         /**< UART TX buffer size. */
-#define UART_RX_BUF_SIZE                256                                         /**< UART RX buffer size. */
 
 
 BLE_NUS_DEF(m_nus, NRF_SDH_BLE_TOTAL_LINK_COUNT);                                   /**< BLE NUS service instance. */
@@ -93,6 +95,19 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 #define SPI0_CONFIG_SCK_PIN         31
 #define SPI0_CONFIG_MOSI_PIN        10
 #define SPI0_CONFIG_MISO_PIN        30
+
+#define IRQ_PIN 26
+
+#define SPI_RING_SIZE 2048
+
+
+//Instantiate SPI
+#define SPI_INSTANCE 0 /**< SPI instance index. */
+#define SPI_BUFFER_SIZE 256
+static const nrf_drv_spi_t spi = NRF_DRV_SPI_INSTANCE(SPI_INSTANCE);/**< SPI instance. */
+static volatile bool spi_xfer_done;  /**< Flag used to indicate that SPI instance completed the transfer. */
+static uint8_t       m_tx_buf[SPI_BUFFER_SIZE];           /**< TX buffer. */
+static uint8_t       m_rx_buf[SPI_BUFFER_SIZE];    /**< RX buffer. */
 
 
 INCBIN(FPGAimg, "FPGAimage.bin");
@@ -500,7 +515,7 @@ static void power_management_init(void)
 static void idle_state_handle(void)
 {
     UNUSED_RETURN_VALUE(NRF_LOG_PROCESS());
-//    nrf_pwr_mgmt_run();
+    nrf_pwr_mgmt_run();
 }
 
 
@@ -622,7 +637,23 @@ int config_FPGA()
 
 }
 
+void spi_event_handler(nrf_drv_spi_evt_t const * p_event,
+                       void *                    p_context)
+{
+    spi_xfer_done = true;
+    NRF_LOG_INFO("Transfer completed.");
+    if (m_rx_buf[0] != 0)
+    {
+        NRF_LOG_INFO(" Received:");
+        NRF_LOG_HEXDUMP_INFO(m_rx_buf, strlen((const char *)m_rx_buf));
+    }
+}
 
+void in_pin_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
+{
+
+	//Called on detection of state high on the spi irq line pin driven by the fpga. Triggers SPI transfer provided SPI is idle.
+}
 
 /**@brief Application main function.
  */
@@ -642,18 +673,43 @@ int main(void)
     conn_params_init();
 
     //////////////////////////
-    //ADDED CODE
-	//Set up pins for programming FPGA
+    //FPGA programming code
+	//Set up for programming FPGA
+    //Set up pins for communicating with FPGA
 	nrf_gpio_pin_dir_set(CHIP_RESET_PIN,NRF_GPIO_PIN_DIR_OUTPUT);
 	nrf_gpio_pin_dir_set(FPGA_RESET_PIN,NRF_GPIO_PIN_DIR_OUTPUT);
+   	nrf_gpio_pin_clear(CHIP_RESET_PIN);
+   	nrf_delay_ms(3);
 	nrf_gpio_pin_set(FPGA_RESET_PIN);
+	nrf_gpio_pin_set(CHIP_RESET_PIN);
     uint8_t res = config_FPGA();
     NRF_LOG_INFO("FPGA programmed result %d",res);
     //////////////////////////
 
+    /////////////////////
+    //Ring buffer init
+    struct ringbuf r;
+    uint8_t ringBuffer[SPI_RING_SIZE];
+    ringbuf_init (&r, ringBuffer, SPI_RING_SIZE);
+
+    ////////////////////
+    //Initialize SPI
+    nrf_drv_spi_config_t spi_config = NRF_DRV_SPI_DEFAULT_CONFIG;
+	spi_config.ss_pin   = SPI_CS_PIN;
+	spi_config.miso_pin = SPI0_CONFIG_MISO_PIN;
+	spi_config.mosi_pin = SPI0_CONFIG_MOSI_PIN;
+	spi_config.sck_pin  = SPI0_CONFIG_SCK_PIN;
+	APP_ERROR_CHECK(nrf_drv_spi_init(&spi, &spi_config, spi_event_handler, NULL));
+
+	///////////////////////
+	//Initialize GPIOTE
+	if(!nrf_drv_gpiote_is_init())	nrf_drv_gpiote_init();
+	nrf_drv_gpiote_in_config_t spiIrq = GPIOTE_CONFIG_IN_SENSE_LOTOHI(true); //configure input pin using high frequency clocks for maximum responsiveness
+	spiIrq.pull = NRF_GPIO_PIN_PULLDOWN;
+	nrf_drv_gpiote_in_init(IRQ_PIN, &spiIrq, in_pin_handler); //set watch on pin 26 calling in_pin_handler on pin state change from low to high
+	nrf_drv_gpiote_in_event_enable(IRQ_PIN, true);
 
     // Start execution.
-//    printf("\r\nUART started.\r\n");
     NRF_LOG_INFO("Debug logging for UART over RTT started.");
     advertising_start();
 
