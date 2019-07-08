@@ -142,6 +142,8 @@ INC_FOLDERS += \
   $(SDK_ROOT)/components/nfc/t4t_parser/apdu \
   $(SDK_ROOT)/components/libraries/util \
   $(PROJ_DIR)/config \
+  $(PROJ_DIR)/external/incbin-master \
+  $(PROJ_DIR)/resources \
   $(SDK_ROOT)/components/libraries/usbd/class/cdc \
   $(SDK_ROOT)/components/libraries/csense \
   $(SDK_ROOT)/components/libraries/balloc \
@@ -217,6 +219,7 @@ OPT = -O3 -g3
 # C flags common to all targets
 CFLAGS += $(OPT)
 CFLAGS += -DBOARD_PCA10040
+CFLAGS += -DCUSTOM
 #CFLAGS += -DCONFIG_GPIO_AS_PINRESET
 CFLAGS += -DFLOAT_ABI_HARD
 CFLAGS += -DNRF52
@@ -228,7 +231,7 @@ CFLAGS += -DSOFTDEVICE_PRESENT
 CFLAGS += -DSWI_DISABLE0
 CFLAGS += -mcpu=cortex-m4
 CFLAGS += -mthumb -mabi=aapcs
-CFLAGS += -Wall -Werror
+CFLAGS += -Wall 
 CFLAGS += -mfloat-abi=hard -mfpu=fpv4-sp-d16
 # keep every function in a separate section, this allows linker to discard unused ones
 CFLAGS += -ffunction-sections -fdata-sections -fno-strict-aliasing
@@ -242,7 +245,8 @@ ASMFLAGS += -g3
 ASMFLAGS += -mcpu=cortex-m4
 ASMFLAGS += -mthumb -mabi=aapcs
 ASMFLAGS += -mfloat-abi=hard -mfpu=fpv4-sp-d16
-ASMFLAGS += -DBOARD_PCA10040
+#ASMFLAGS += -DBOARD_PCA10040
+ASMFLAGS += -DBOARD_CUSTOM
 #ASMFLAGS += -DCONFIG_GPIO_AS_PINRESET
 ASMFLAGS += -DFLOAT_ABI_HARD
 ASMFLAGS += -DNRF52

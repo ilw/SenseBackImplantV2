@@ -6,6 +6,7 @@ GROUP(-lgcc -lc -lnosys)
 MEMORY
 {
   FLASH (rx) : ORIGIN = 0x26000, LENGTH = 0x5a000
+  UICR (rx) : ORIGIN = 0x10001000, LENGTH = 0x0FFFF000
   RAM (rwx) :  ORIGIN = 0x20002a98, LENGTH = 0xd568
 }
 
@@ -15,6 +16,10 @@ SECTIONS
 
 SECTIONS
 {
+  .uicr 0x1000120C :
+  {
+	KEEP(*(.uicr))
+  } > UICR
   . = ALIGN(4);
   .mem_section_dummy_ram :
   {

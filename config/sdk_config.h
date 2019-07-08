@@ -457,7 +457,7 @@
 // <e> BLE_NUS_CONFIG_LOG_ENABLED - Enables logging in the module.
 //==========================================================
 #ifndef BLE_NUS_CONFIG_LOG_ENABLED
-#define BLE_NUS_CONFIG_LOG_ENABLED 0
+#define BLE_NUS_CONFIG_LOG_ENABLED 1
 #endif
 // <o> BLE_NUS_CONFIG_LOG_LEVEL  - Default Severity level
  
@@ -468,7 +468,7 @@
 // <4=> Debug 
 
 #ifndef BLE_NUS_CONFIG_LOG_LEVEL
-#define BLE_NUS_CONFIG_LOG_LEVEL 3
+#define BLE_NUS_CONFIG_LOG_LEVEL 4
 #endif
 
 // <o> BLE_NUS_CONFIG_INFO_COLOR  - ANSI escape code prefix.
@@ -500,7 +500,7 @@
 // <8=> White 
 
 #ifndef BLE_NUS_CONFIG_DEBUG_COLOR
-#define BLE_NUS_CONFIG_DEBUG_COLOR 0
+#define BLE_NUS_CONFIG_DEBUG_COLOR 2
 #endif
 
 // </e>
@@ -7477,7 +7477,7 @@
 // <4=> Debug 
 
 #ifndef NRF_LOG_DEFAULT_LEVEL
-#define NRF_LOG_DEFAULT_LEVEL 3
+#define NRF_LOG_DEFAULT_LEVEL 4
 #endif
 
 // <q> NRF_LOG_DEFERRED  - Enable deffered logger.
@@ -7527,7 +7527,7 @@
 // <e> NRF_LOG_USES_COLORS - If enabled then ANSI escape code for colors is prefixed to every string
 //==========================================================
 #ifndef NRF_LOG_USES_COLORS
-#define NRF_LOG_USES_COLORS 0
+#define NRF_LOG_USES_COLORS 1
 #endif
 // <o> NRF_LOG_COLOR_DEFAULT  - ANSI escape code prefix.
  

@@ -1,53 +1,3 @@
-/**
- * Copyright (c) 2014 - 2018, Nordic Semiconductor ASA
- *
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form, except as embedded into a Nordic
- *    Semiconductor ASA integrated circuit in a product or a software update for
- *    such product, must reproduce the above copyright notice, this list of
- *    conditions and the following disclaimer in the documentation and/or other
- *    materials provided with the distribution.
- *
- * 3. Neither the name of Nordic Semiconductor ASA nor the names of its
- *    contributors may be used to endorse or promote products derived from this
- *    software without specific prior written permission.
- *
- * 4. This software, with or without modification, must only be used with a
- *    Nordic Semiconductor ASA integrated circuit.
- *
- * 5. Any software provided in binary form under this license must not be reverse
- *    engineered, decompiled, modified and/or disassembled.
- *
- * THIS SOFTWARE IS PROVIDED BY NORDIC SEMICONDUCTOR ASA "AS IS" AND ANY EXPRESS
- * OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
- * OF MERCHANTABILITY, NONINFRINGEMENT, AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL NORDIC SEMICONDUCTOR ASA OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE
- * GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
- * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- */
-/** @file
- *
- * @defgroup ble_sdk_uart_over_ble_main main.c
- * @{
- * @ingroup  ble_sdk_app_nus_eval
- * @brief    UART over BLE application main file.
- *
- * This file contains the source code for a sample application that uses the Nordic UART service.
- * This application uses the @ref srvlib_conn_params module.
- */
-
 
 #include <stdint.h>
 #include <string.h>
@@ -68,6 +18,8 @@
 #include "app_util_platform.h"
 #include "bsp_btn_ble.h"
 #include "nrf_pwr_mgmt.h"
+#include "incbin.h"
+#include "nrf_delay.h"
 
 #if defined (UART_PRESENT)
 #include "nrf_uart.h"
@@ -117,6 +69,33 @@ static ble_uuid_t m_adv_uuids[]          =                                      
     {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE}
 };
 
+
+
+//FPGA programming image variables here
+#define FPGAIMAGE_SIZE 71337
+
+//Pin connections for schematics_test board (SENSEBACK)
+//SPI:    CS - PIN 9		CSK - PIN 31    MOSI - PIN 10		MISO - PIN 30
+
+//Define SPI CS pins
+#define SPI_CS_PIN  9 /**< SPIS CS Pin. Should be shortened with @ref SPI_CS_PIN */
+#define SPI_CS_PIN2 29
+
+
+
+//FPGA programming pins: reset, done
+#define CS_RESET_B 28
+#define CDONE 3
+#define FPGA_RESET_PIN 2
+
+#define CHIP_RESET_PIN 23
+
+#define SPI0_CONFIG_SCK_PIN         31
+#define SPI0_CONFIG_MOSI_PIN        10
+#define SPI0_CONFIG_MISO_PIN        30
+
+
+INCBIN(FPGAimg, "FPGAimage.bin");
 
 /**@brief Function for assert macro callback.
  *
@@ -203,6 +182,7 @@ static void nus_data_handler(ble_nus_evt_t * p_evt)
         NRF_LOG_DEBUG("Received data from BLE NUS. Writing data on UART.");
         NRF_LOG_HEXDUMP_DEBUG(p_evt->params.rx_data.p_data, p_evt->params.rx_data.length);
 
+        /*
         for (uint32_t i = 0; i < p_evt->params.rx_data.length; i++)
         {
             do
@@ -219,6 +199,7 @@ static void nus_data_handler(ble_nus_evt_t * p_evt)
         {
             while (app_uart_put('\n') == NRF_ERROR_BUSY);
         }
+        */
     }
 
 }
@@ -305,23 +286,6 @@ static void conn_params_init(void)
 }
 
 
-/**@brief Function for putting the chip into sleep mode.
- *
- * @note This function will not return.
- */
-static void sleep_mode_enter(void)
-{
-    uint32_t err_code = bsp_indication_set(BSP_INDICATE_IDLE);
-    APP_ERROR_CHECK(err_code);
-
-    // Prepare wakeup buttons.
-    err_code = bsp_btn_ble_sleep_mode_prepare();
-    APP_ERROR_CHECK(err_code);
-
-    // Go to system-off mode (this function will not return; wakeup will cause a reset).
-    err_code = sd_power_system_off();
-    APP_ERROR_CHECK(err_code);
-}
 
 
 /**@brief Function for handling advertising events.
@@ -341,7 +305,7 @@ static void on_adv_evt(ble_adv_evt_t ble_adv_evt)
             APP_ERROR_CHECK(err_code);
             break;
         case BLE_ADV_EVT_IDLE:
-            sleep_mode_enter();
+//            sleep_mode_enter();
             break;
         default:
             break;
@@ -473,134 +437,8 @@ void gatt_init(void)
 }
 
 
-/**@brief Function for handling events from the BSP module.
- *
- * @param[in]   event   Event generated by button press.
- */
-void bsp_event_handler(bsp_event_t event)
-{
-    uint32_t err_code;
-    switch (event)
-    {
-        case BSP_EVENT_SLEEP:
-            sleep_mode_enter();
-            break;
-
-        case BSP_EVENT_DISCONNECT:
-            err_code = sd_ble_gap_disconnect(m_conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
-            if (err_code != NRF_ERROR_INVALID_STATE)
-            {
-                APP_ERROR_CHECK(err_code);
-            }
-            break;
-
-        case BSP_EVENT_WHITELIST_OFF:
-            if (m_conn_handle == BLE_CONN_HANDLE_INVALID)
-            {
-                err_code = ble_advertising_restart_without_whitelist(&m_advertising);
-                if (err_code != NRF_ERROR_INVALID_STATE)
-                {
-                    APP_ERROR_CHECK(err_code);
-                }
-            }
-            break;
-
-        default:
-            break;
-    }
-}
 
 
-/**@brief   Function for handling app_uart events.
- *
- * @details This function will receive a single character from the app_uart module and append it to
- *          a string. The string will be be sent over BLE when the last character received was a
- *          'new line' '\n' (hex 0x0A) or if the string has reached the maximum data length.
- */
-/**@snippet [Handling the data received over UART] */
-void uart_event_handle(app_uart_evt_t * p_event)
-{
-    static uint8_t data_array[BLE_NUS_MAX_DATA_LEN];
-    static uint8_t index = 0;
-    uint32_t       err_code;
-
-    switch (p_event->evt_type)
-    {
-        case APP_UART_DATA_READY:
-            UNUSED_VARIABLE(app_uart_get(&data_array[index]));
-            index++;
-
-            if ((data_array[index - 1] == '\n') ||
-                (data_array[index - 1] == '\r') ||
-                (index >= m_ble_nus_max_data_len))
-            {
-                if (index > 1)
-                {
-                    NRF_LOG_DEBUG("Ready to send data over BLE NUS");
-                    NRF_LOG_HEXDUMP_DEBUG(data_array, index);
-
-                    do
-                    {
-                        uint16_t length = (uint16_t)index;
-                        err_code = ble_nus_data_send(&m_nus, data_array, &length, m_conn_handle);
-                        if ((err_code != NRF_ERROR_INVALID_STATE) &&
-                            (err_code != NRF_ERROR_RESOURCES) &&
-                            (err_code != NRF_ERROR_NOT_FOUND))
-                        {
-                            APP_ERROR_CHECK(err_code);
-                        }
-                    } while (err_code == NRF_ERROR_RESOURCES);
-                }
-
-                index = 0;
-            }
-            break;
-
-        case APP_UART_COMMUNICATION_ERROR:
-            APP_ERROR_HANDLER(p_event->data.error_communication);
-            break;
-
-        case APP_UART_FIFO_ERROR:
-            APP_ERROR_HANDLER(p_event->data.error_code);
-            break;
-
-        default:
-            break;
-    }
-}
-/**@snippet [Handling the data received over UART] */
-
-
-/**@brief  Function for initializing the UART module.
- */
-/**@snippet [UART Initialization] */
-static void uart_init(void)
-{
-    uint32_t                     err_code;
-    app_uart_comm_params_t const comm_params =
-    {
-        .rx_pin_no    = RX_PIN_NUMBER,
-        .tx_pin_no    = TX_PIN_NUMBER,
-        .rts_pin_no   = RTS_PIN_NUMBER,
-        .cts_pin_no   = CTS_PIN_NUMBER,
-        .flow_control = APP_UART_FLOW_CONTROL_DISABLED,
-        .use_parity   = false,
-#if defined (UART_PRESENT)
-        .baud_rate    = NRF_UART_BAUDRATE_115200
-#else
-        .baud_rate    = NRF_UARTE_BAUDRATE_115200
-#endif
-    };
-
-    APP_UART_FIFO_INIT(&comm_params,
-                       UART_RX_BUF_SIZE,
-                       UART_TX_BUF_SIZE,
-                       uart_event_handle,
-                       APP_IRQ_PRIORITY_LOWEST,
-                       err_code);
-    APP_ERROR_CHECK(err_code);
-}
-/**@snippet [UART Initialization] */
 
 
 /**@brief Function for initializing the Advertising functionality.
@@ -631,22 +469,7 @@ static void advertising_init(void)
 }
 
 
-/**@brief Function for initializing buttons and leds.
- *
- * @param[out] p_erase_bonds  Will be true if the clear bonding button was pressed to wake the application up.
- */
-static void buttons_leds_init(bool * p_erase_bonds)
-{
-    bsp_event_t startup_event;
 
-    uint32_t err_code = bsp_init(BSP_INIT_LEDS | BSP_INIT_BUTTONS, bsp_event_handler);
-    APP_ERROR_CHECK(err_code);
-
-    err_code = bsp_btn_ble_init(NULL, &startup_event);
-    APP_ERROR_CHECK(err_code);
-
-    *p_erase_bonds = (startup_event == BSP_EVENT_CLEAR_BONDING_DATA);
-}
 
 
 /**@brief Function for initializing the nrf log module.
@@ -677,7 +500,7 @@ static void power_management_init(void)
 static void idle_state_handle(void)
 {
     UNUSED_RETURN_VALUE(NRF_LOG_PROCESS());
-    nrf_pwr_mgmt_run();
+//    nrf_pwr_mgmt_run();
 }
 
 
@@ -690,17 +513,129 @@ static void advertising_start(void)
 }
 
 
+
+//{ FPGA PROGRAMMING FUNCTIONS
+
+void bitbang_spi(uint8_t data)
+{
+	int i;
+	nrf_gpio_pin_clear(SPI_CS_PIN2);// Set CS line of FPGA programming spi (active) low
+	nrf_delay_us(1);// small delay
+	for (i=0;i<8;i++) {
+		//SPI data: CLK normally HI, latched on transition from LO to HI
+
+		nrf_gpio_pin_clear(SPI0_CONFIG_SCK_PIN);// Set SPI_CLK low
+		nrf_delay_us(1);// small delay
+		//Program FPGA MSB first
+		if (((data<<i) & 0x80) == 0x80) { //if checked bit is HI
+			nrf_gpio_pin_set(SPI0_CONFIG_MOSI_PIN);// Set SPI_MOSI high
+		}
+		else {
+			nrf_gpio_pin_clear(SPI0_CONFIG_MOSI_PIN);// Set SPI_MOSI low
+		}
+		nrf_delay_us(1);// small Delay
+		nrf_gpio_pin_set(SPI0_CONFIG_SCK_PIN);// Set SPI_CLK high
+		nrf_delay_us(1);// small Delay
+
+	}
+	nrf_gpio_pin_set(SPI_CS_PIN2);// Set CS line of FPGA programming spi (inactive) high
+	nrf_delay_us(1);// small delay
+
+}
+
+void Send_Clocks(int num_clocks)
+{
+	int i;
+	for (i = 0; i < num_clocks; i++)
+	{
+		nrf_gpio_pin_clear(SPI0_CONFIG_SCK_PIN);// Set SPI_CLK low
+		nrf_delay_us(1);// small delay
+		nrf_gpio_pin_set(SPI0_CONFIG_SCK_PIN);// Set SPI_CLK high
+		nrf_delay_us(1);// small Delay
+	}
+}
+
+
+
+int config_FPGA()
+{
+	int i=0;
+
+	//Set up pins for programming FPGA
+	nrf_gpio_pin_dir_set(CHIP_RESET_PIN,NRF_GPIO_PIN_DIR_OUTPUT);
+	nrf_gpio_pin_dir_set(FPGA_RESET_PIN,NRF_GPIO_PIN_DIR_OUTPUT);
+	nrf_gpio_pin_set(FPGA_RESET_PIN);
+
+
+
+	//Set spi and creset pins as outputs
+	nrf_gpio_pin_dir_set(SPI0_CONFIG_SCK_PIN,NRF_GPIO_PIN_DIR_OUTPUT);
+	nrf_gpio_pin_dir_set(SPI0_CONFIG_MOSI_PIN,NRF_GPIO_PIN_DIR_OUTPUT);
+	nrf_gpio_pin_dir_set(SPI_CS_PIN2,NRF_GPIO_PIN_DIR_OUTPUT);
+	nrf_gpio_pin_dir_set(CS_RESET_B,NRF_GPIO_PIN_DIR_OUTPUT);
+	nrf_gpio_pin_dir_set(CDONE,NRF_GPIO_PIN_DIR_INPUT);
+
+
+
+	// Clear SSEL and CS_Reset
+	nrf_gpio_pin_clear(SPI_CS_PIN2);
+	nrf_gpio_pin_clear(CS_RESET_B);
+	nrf_gpio_pin_clear(SPI0_CONFIG_MOSI_PIN);
+
+	//Set clk
+	nrf_gpio_pin_set(SPI0_CONFIG_SCK_PIN);
+
+	//delay >200ns
+	nrf_delay_us(10);
+
+	//set creset high
+	nrf_gpio_pin_set(CS_RESET_B);
+
+	//delay >1.2ms
+	nrf_delay_ms(3);
+
+	//set ssel high
+	nrf_gpio_pin_set(SPI_CS_PIN2);
+
+	//send 8 clocks
+	Send_Clocks(8);
+
+
+
+	for (i=0;i<gFPGAimgSize;i++)
+	{
+		bitbang_spi(*(gFPGAimgData+i));
+	}
+
+	//Program FPGA (call spi_bitbang) here
+	//Send file 1 byte at a time
+
+
+	//Take control of sck again
+	nrf_gpio_pin_set(SPI_CS_PIN2);
+
+	//send 100 clocks
+	Send_Clocks(100);
+
+	//Return pins to default configurations //Necessary?
+	nrf_gpio_cfg_default(SPI0_CONFIG_SCK_PIN );
+	nrf_gpio_cfg_default(SPI0_CONFIG_MOSI_PIN );
+
+	return nrf_gpio_pin_read(CDONE);// PASS if CDONE is true -
+
+}
+
+
+
 /**@brief Application main function.
  */
 int main(void)
 {
-    bool erase_bonds;
+    bool erase_bonds=1;
 
     // Initialize.
-    uart_init();
     log_init();
     timers_init();
-    buttons_leds_init(&erase_bonds);
     power_management_init();
     ble_stack_init();
     gap_params_init();
@@ -710,7 +645,7 @@ int main(void)
     conn_params_init();
 
     // Start execution.
-    printf("\r\nUART started.\r\n");
+//    printf("\r\nUART started.\r\n");
     NRF_LOG_INFO("Debug logging for UART over RTT started.");
     advertising_start();
 
