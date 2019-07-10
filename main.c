@@ -47,8 +47,8 @@
 
 #define APP_ADV_DURATION                18000                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
 
-#define MIN_CONN_INTERVAL               MSEC_TO_UNITS(20, UNIT_1_25_MS)             /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */
-#define MAX_CONN_INTERVAL               MSEC_TO_UNITS(75, UNIT_1_25_MS)             /**< Maximum acceptable connection interval (75 ms), Connection interval uses 1.25 ms units. */
+#define MIN_CONN_INTERVAL                MSEC_TO_UNITS(28, UNIT_1_25_MS)           /**< Minimum acceptable connection interval (0.02 seconds). */
+#define MAX_CONN_INTERVAL                MSEC_TO_UNITS(28, UNIT_1_25_MS)           /**< Maximum acceptable connection interval (0.1 second). */
 #define SLAVE_LATENCY                   0                                           /**< Slave latency. */
 #define CONN_SUP_TIMEOUT                MSEC_TO_UNITS(4000, UNIT_10_MS)             /**< Connection supervisory timeout (4 seconds), Supervision Timeout uses 10 ms units. */
 #define FIRST_CONN_PARAMS_UPDATE_DELAY  APP_TIMER_TICKS(5000)                       /**< Time from initiating event (connect or start of notification) to first time sd_ble_gap_conn_param_update is called (5 seconds). */
@@ -119,7 +119,50 @@ static uint8_t nusTx[SPI_RING_SIZE * 2]; //times 2 because its only uint8
 #define EMONITOR_MASK 0xFC
 #define EMONITOR_VAL 0x20
 
+#define SENSEBACK_MTU 240
+
 INCBIN(FPGAimg, "FPGAimage.bin");
+static volatile bool txActive = false;
+static volatile bool bleTxBusy =false;
+static volatile uint16_t txRdPtr;
+static volatile uint16_t txSize;
+
+
+void notification_send()
+{
+
+	uint16_t length;
+	uint32_t err_code = NRF_SUCCESS;
+
+	while (err_code == NRF_SUCCESS && txRdPtr < txSize)
+	{
+		length = ((txSize -txRdPtr) > SENSEBACK_MTU) ? SENSEBACK_MTU : (txSize -txRdPtr);
+		err_code = ble_nus_data_send(&m_nus, &nusTx[txRdPtr], &length, m_conn_handle);
+
+		if ((err_code != NRF_ERROR_INVALID_STATE) &&
+			(err_code != NRF_ERROR_RESOURCES) &&
+			(err_code != NRF_ERROR_NOT_FOUND))
+		{
+			APP_ERROR_CHECK(err_code);
+		}
+		if (err_code == NRF_SUCCESS) txRdPtr += length;
+		if (err_code == NRF_ERROR_RESOURCES) bleTxBusy = true;
+	}
+	if (txRdPtr >= txSize) txActive = false;
+}
+
+
+void on_tx_complete()
+{
+    if (bleTxBusy)
+    {
+    	bleTxBusy= false;
+        notification_send();
+    }
+}
+
+
+
 
 /**@brief Function for assert macro callback.
  *
@@ -391,6 +434,10 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             APP_ERROR_CHECK(err_code);
             break;
 
+        case BLE_GATTS_EVT_HVN_TX_COMPLETE:
+			on_tx_complete();
+			break;
+
         default:
             // No implementation needed.
             break;
@@ -414,6 +461,14 @@ static void ble_stack_init(void)
     uint32_t ram_start = 0;
     err_code = nrf_sdh_ble_default_cfg_set(APP_BLE_CONN_CFG_TAG, &ram_start);
     APP_ERROR_CHECK(err_code);
+
+    //tell the softdevice to create a bunch of transmission buffers in memory (increases the softdevice ram size)
+    ble_cfg_t ble_cfg;
+	memset(&ble_cfg, 0, sizeof (ble_cfg));
+	ble_cfg.conn_cfg.conn_cfg_tag = APP_BLE_CONN_CFG_TAG;
+	ble_cfg.conn_cfg.params.gatts_conn_cfg.hvn_tx_queue_size = 15;
+	err_code = sd_ble_cfg_set(BLE_CONN_CFG_GATTS, &ble_cfg, ram_start);
+
 
     // Enable BLE stack.
     err_code = nrf_sdh_ble_enable(&ram_start);
@@ -516,9 +571,9 @@ static void spiBuffProcess()
 	uint32_t err_code;
 
 	//Deal with the data going to the chip
-	uint16_t queue = ringbuf_elements(&spiTx);
+	uint16_t queueLength = ringbuf_elements(&spiTx);
 
-	for (int i=0; i<queue; i++)
+	for (int i=0; i<queueLength; i++)
 	{
 		element = ringbuf_get(&spiTx);
 		m_tx_buf[0] = element >>8;
@@ -530,33 +585,29 @@ static void spiBuffProcess()
 	}
 
 	//Deal with the data coming from the chip
-	queue = ringbuf_elements(&spiRx);
-	for (int i=0; i<queue; i++)
-	{
-		element = ringbuf_get(&spiRx);
-		nusTx[i*2] = element>>8;
-		nusTx[i*2+1] = (uint8_t)element;
-	}
 
-	if (queue > 0)
+	if (!txActive)
 	{
-		NRF_LOG_DEBUG("Ready to send data over BLE NUS");
-		NRF_LOG_HEXDUMP_DEBUG(nusTx, queue*2);
-
-		do
+		queueLength = ringbuf_elements(&spiRx);
+		for (int i=0; i<queueLength; i++)
 		{
-			uint16_t length = (queue*2);
-			err_code = ble_nus_data_send(&m_nus, nusTx, &length, m_conn_handle);
-			if ((err_code != NRF_ERROR_INVALID_STATE) &&
-				(err_code != NRF_ERROR_RESOURCES) &&
-				(err_code != NRF_ERROR_NOT_FOUND))
-			{
-				APP_ERROR_CHECK(err_code);
-			}
-		} while (err_code == NRF_ERROR_RESOURCES);
+			element = ringbuf_get(&spiRx);
+			nusTx[i*2] = element>>8;
+			nusTx[i*2+1] = (uint8_t)element;
+		}
+
+		if (queueLength > 0)
+		{
+			NRF_LOG_DEBUG("Ready to send data over BLE NUS");
+			//NRF_LOG_HEXDUMP_DEBUG(nusTx, queueLength*2);
+			txActive = true;
+			txSize = 2*queueLength;
+			txRdPtr = 0;
+			notification_send();
+		}
+
 	}
 }
-
 
 
 /**@brief Function for handling the idle state (main loop).
