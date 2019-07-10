@@ -101,14 +101,23 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 #define SPI_RING_SIZE 2048
 
 
+
 //Instantiate SPI
 #define SPI_INSTANCE 0 /**< SPI instance index. */
-#define SPI_BUFFER_SIZE 256
+#define SPI_BUFFER_SIZE 2 //To send 16 bit words
 static const nrf_drv_spi_t spi = NRF_DRV_SPI_INSTANCE(SPI_INSTANCE);/**< SPI instance. */
 static volatile bool spi_xfer_done;  /**< Flag used to indicate that SPI instance completed the transfer. */
 static uint8_t       m_tx_buf[SPI_BUFFER_SIZE];           /**< TX buffer. */
 static uint8_t       m_rx_buf[SPI_BUFFER_SIZE];    /**< RX buffer. */
 
+struct ringbuf spiTx,spiRx;
+static uint16_t ringBuffer[SPI_RING_SIZE];
+static uint16_t ringBuffer2[SPI_RING_SIZE];
+
+static uint8_t nusTx[SPI_RING_SIZE * 2]; //times 2 because its only uint8
+
+#define EMONITOR_MASK 0xFC
+#define EMONITOR_VAL 0x20
 
 INCBIN(FPGAimg, "FPGAimage.bin");
 
@@ -193,28 +202,18 @@ static void nus_data_handler(ble_nus_evt_t * p_evt)
     if (p_evt->type == BLE_NUS_EVT_RX_DATA)
     {
         uint32_t err_code;
-
+        uint16_t word;
         NRF_LOG_DEBUG("Received data from BLE NUS. Writing data on UART.");
         NRF_LOG_HEXDUMP_DEBUG(p_evt->params.rx_data.p_data, p_evt->params.rx_data.length);
+        int res;
 
-        /*
-        for (uint32_t i = 0; i < p_evt->params.rx_data.length; i++)
+
+        for (uint32_t i = 0; i < (p_evt->params.rx_data.length)/2; i++)
         {
-            do
-            {
-                err_code = app_uart_put(p_evt->params.rx_data.p_data[i]);
-                if ((err_code != NRF_SUCCESS) && (err_code != NRF_ERROR_BUSY))
-                {
-                    NRF_LOG_ERROR("Failed receiving NUS message. Error 0x%x. ", err_code);
-                    APP_ERROR_CHECK(err_code);
-                }
-            } while (err_code == NRF_ERROR_BUSY);
+        	word = (((uint16_t)p_evt->params.rx_data.p_data[i*2])  << 8) + p_evt->params.rx_data.p_data[i*2+1];
+            res = ringbuf_put(&spiTx,word);
+            if (!res) NRF_LOG_DEBUG("spi buffer full");
         }
-        if (p_evt->params.rx_data.p_data[p_evt->params.rx_data.length - 1] == '\r')
-        {
-            while (app_uart_put('\n') == NRF_ERROR_BUSY);
-        }
-        */
     }
 
 }
@@ -508,12 +507,65 @@ static void power_management_init(void)
 }
 
 
+
+static void spiBuffProcess()
+{
+
+
+	uint16_t element;
+	uint32_t err_code;
+
+	//Deal with the data going to the chip
+	uint16_t queue = ringbuf_elements(&spiTx);
+
+	for (int i=0; i<queue; i++)
+	{
+		element = ringbuf_get(&spiTx);
+		m_tx_buf[0] = element >>8;
+		m_tx_buf[1] = (uint8_t)element ;
+
+		spi_xfer_done = false;
+		nrf_drv_spi_transfer(&spi,m_tx_buf,sizeof(m_tx_buf),m_rx_buf,sizeof(m_rx_buf));
+		while (!spi_xfer_done)	__WFE();
+	}
+
+	//Deal with the data coming from the chip
+	queue = ringbuf_elements(&spiRx);
+	for (int i=0; i<queue; i++)
+	{
+		element = ringbuf_get(&spiRx);
+		nusTx[i*2] = element>>8;
+		nusTx[i*2+1] = (uint8_t)element;
+	}
+
+	if (queue > 0)
+	{
+		NRF_LOG_DEBUG("Ready to send data over BLE NUS");
+		NRF_LOG_HEXDUMP_DEBUG(nusTx, queue*2);
+
+		do
+		{
+			uint16_t length = (queue*2);
+			err_code = ble_nus_data_send(&m_nus, nusTx, &length, m_conn_handle);
+			if ((err_code != NRF_ERROR_INVALID_STATE) &&
+				(err_code != NRF_ERROR_RESOURCES) &&
+				(err_code != NRF_ERROR_NOT_FOUND))
+			{
+				APP_ERROR_CHECK(err_code);
+			}
+		} while (err_code == NRF_ERROR_RESOURCES);
+	}
+}
+
+
+
 /**@brief Function for handling the idle state (main loop).
  *
  * @details If there is no pending log operation, then sleep until next the next event occurs.
  */
 static void idle_state_handle(void)
 {
+	spiBuffProcess();
     UNUSED_RETURN_VALUE(NRF_LOG_PROCESS());
     nrf_pwr_mgmt_run();
 }
@@ -640,19 +692,31 @@ int config_FPGA()
 void spi_event_handler(nrf_drv_spi_evt_t const * p_event,
                        void *                    p_context)
 {
+	uint16_t word;
     spi_xfer_done = true;
     NRF_LOG_INFO("Transfer completed.");
-    if (m_rx_buf[0] != 0)
+    if (m_rx_buf[0] != 0 || m_rx_buf[1] != 0)
     {
         NRF_LOG_INFO(" Received:");
         NRF_LOG_HEXDUMP_INFO(m_rx_buf, strlen((const char *)m_rx_buf));
     }
+    if ((m_rx_buf[0] & EMONITOR_MASK) != EMONITOR_VAL )
+    {
+    	word = ((uint16_t)m_rx_buf[0]<<8) + m_rx_buf[1];
+    	//Queue all non-emonitor values for transmission
+    	ringbuf_put(&spiRx,word);
+    }
+
+
 }
 
 void in_pin_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
 {
-
 	//Called on detection of state high on the spi irq line pin driven by the fpga. Triggers SPI transfer provided SPI is idle.
+	if (pin == IRQ_PIN)
+	{
+		ringbuf_put(&spiTx,0x0000);
+	}
 }
 
 /**@brief Application main function.
@@ -688,13 +752,13 @@ int main(void)
 
     /////////////////////
     //Ring buffer init
-    struct ringbuf r;
-    uint8_t ringBuffer[SPI_RING_SIZE];
-    ringbuf_init (&r, ringBuffer, SPI_RING_SIZE);
 
+    ringbuf_init (&spiTx, ringBuffer, SPI_RING_SIZE);
+    ringbuf_init (&spiRx, ringBuffer2, SPI_RING_SIZE);
     ////////////////////
     //Initialize SPI
     nrf_drv_spi_config_t spi_config = NRF_DRV_SPI_DEFAULT_CONFIG;
+    spi_config.frequency = NRF_DRV_SPI_FREQ_8M;
 	spi_config.ss_pin   = SPI_CS_PIN;
 	spi_config.miso_pin = SPI0_CONFIG_MISO_PIN;
 	spi_config.mosi_pin = SPI0_CONFIG_MOSI_PIN;
